@@ -1,0 +1,49 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: gateway
+
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: false
+      routes:
+        - id: clinic-svc
+          uri: http://${CLINIC_SVC_HOST:localhost}:${CLINIC_SVC_PORT:8081}
+          predicates:
+            - Path=/api/clinic/**
+          filters:
+            - StripPrefix=2
+
+        - id: medication-svc
+          uri: http://${MEDICATION_SVC_HOST:localhost}:${MEDICATION_SVC_PORT:8082}
+          predicates:
+            - Path=/api/medication/**
+          filters:
+            - StripPrefix=2
+
+        - id: sync-svc
+          uri: http://${SYNC_SVC_HOST:localhost}:${SYNC_SVC_PORT:8083}
+          predicates:
+            - Path=/api/sync/**
+          filters:
+            - StripPrefix=2
+
+        - id: audit-svc
+          uri: http://${AUDIT_SVC_HOST:localhost}:${AUDIT_SVC_PORT:8084}
+          predicates:
+            - Path=/api/audit/**
+          filters:
+            - StripPrefix=2
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
