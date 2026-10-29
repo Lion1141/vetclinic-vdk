@@ -2,32 +2,49 @@
 
 Монорепозиторий микросервисов для системы ветеринарной клиники.
 
+## Архитектура
+
+```
+Client ──► Gateway :8080
+              │
+              ├── /api/clinic/**    ──► clinic-svc    :8081 (PostgreSQL + RabbitMQ)
+              ├── /api/medication/**─► medication-svc  :8082 (PostgreSQL + RabbitMQ)
+              ├── /api/sync/**      ──► sync-svc      :8083 (PostgreSQL + Redis + RabbitMQ)
+              └── /api/audit/**     ──► audit-svc     :8084 (PostgreSQL + RabbitMQ consumer)
+```
+
 ## Структура проекта
 
 ```
-vet-app/
+demo/
 ├── apps/
-│   ├── clinic-svc/        # Сервис управления клиниками
-│   ├── medication-svc/    # Сервис управления медикаментами
-│   ├── sync-svc/          # Сервис синхронизации данных
-│   ├── audit-svc/         # Сервис аудита событий
+│   ├── clinic-svc/        # Управление клиниками (REST + AMQP)
+│   ├── medication-svc/    # Управление медикаментами (REST + AMQP publisher)
+│   ├── sync-svc/          # Синхронизация данных (REST + Redis + AMQP)
+│   ├── audit-svc/         # Аудит событий (AMQP consumer, без REST)
 │   └── gateway/           # API Gateway (Spring Cloud Gateway)
 ├── packages/
-│   └── contracts/         # Общие контракты и DTO
-└── pom.xml                # Корневой агрегатор
+│   └── contracts/         # Общие DTO и контракты (Jackson + Validation)
+├── infra/
+│   ├── compose/           # Docker Compose (базы данных)
+│   ├── k8s/               # Kubernetes манифесты (в разработке)
+│   └── scripts/           # Вспомогательные скрипты (в разработке)
+└── pom.xml                # Корневой агрегатор (7 модулей)
 ```
 
 ## Технологии
 
 - **Java 21**
-- **Spring Boot 3.5.x**
+- **Spring Boot 3.5.0**
+- **Spring Cloud 2025.0.0** (Gateway)
 - **Maven** (монорепозиторий с агрегатором)
-- **PostgreSQL** — основная БД
-- **Flyway** — миграции БД
-- **RabbitMQ** — асинхронное взаимодействие
+- **PostgreSQL** — основная БД (HikariCP, pool: 10/5)
+- **Flyway 11** — миграции БД (`baseline-on-migrate: true`)
+- **RabbitMQ** — асинхронное взаимодействие (AMQP)
 - **Redis** — кэширование и дедупликация (sync-svc)
-- **Spring Cloud Gateway** — API Gateway
-- **Testcontainers** — интеграционные тесты
+- **Testcontainers 1.20** — интеграционные тесты
+- **SpringDoc** — OpenAPI документация (clinic-svc, medication-svc)
+- **Lombok** — уменьшение boilerplate
 
 ## Быстрый старт
 
@@ -35,13 +52,13 @@ vet-app/
 
 ```bash
 # Собрать все модули
-mvn -q compile
+./mvnw clean package -DskipTests
 
 # Собрать конкретный сервис
-mvn -pl apps/clinic-svc -am package
+./mvnw -pl apps/clinic-svc -am package
 
 # Собрать и протестировать
-mvn -pl apps/clinic-svc -am verify
+./mvnw -pl apps/clinic-svc -am verify
 ```
 
 ### Запуск сервисов
@@ -50,19 +67,26 @@ mvn -pl apps/clinic-svc -am verify
 
 ```bash
 # Clinic Service
-mvn -pl apps/clinic-svc spring-boot:run
+./mvnw -pl apps/clinic-svc spring-boot:run
 
 # Medication Service
-mvn -pl apps/medication-svc spring-boot:run
+./mvnw -pl apps/medication-svc spring-boot:run
 
 # Sync Service
-mvn -pl apps/sync-svc spring-boot:run
+./mvnw -pl apps/sync-svc spring-boot:run
 
 # Audit Service
-mvn -pl apps/audit-svc spring-boot:run
+./mvnw -pl apps/audit-svc spring-boot:run
 
 # Gateway
-mvn -pl apps/gateway spring-boot:run
+./mvnw -pl apps/gateway spring-boot:run
+```
+
+### Запуск инфраструктуры
+
+```bash
+# PostgreSQL для clinic-svc
+docker compose -f infra/compose/docker-compose.yml up -d
 ```
 
 ### Переменные окружения
@@ -81,13 +105,13 @@ mvn -pl apps/gateway spring-boot:run
 
 ## Порты сервисов
 
-| Сервис | Порт |
-|--------|------|
-| Gateway | 8080 |
-| Clinic | 8081 |
-| Medication | 8082 |
-| Sync | 8083 |
-| Audit | 8084 |
+| Сервис | Порт | Описание |
+|--------|------|----------|
+| Gateway | 8080 | Spring Cloud Gateway |
+| Clinic | 8081 | REST + AMQP |
+| Medication | 8082 | REST + AMQP publisher |
+| Sync | 8083 | REST + Redis + AMQP |
+| Audit | 8084 | AMQP consumer (без REST) |
 
 ## Docker
 
@@ -101,28 +125,24 @@ docker build -t vetapp/audit-svc -f apps/audit-svc/Dockerfile .
 docker build -t vetapp/gateway -f apps/gateway/Dockerfile .
 ```
 
+Каждый Dockerfile использует multi-stage build:
+- **Build stage:** `eclipse-temurin:21-jdk-alpine` → `./mvnw package -DskipTests`
+- **Runtime stage:** `eclipse-temurin:21-jre-alpine` → `java -jar app.jar`
+
 ## CI/CD
 
-Конвейер GitHub Actions автоматически:
-- Собирает проект при push в main/develop
-- Запускает тесты для изменённых модулей
-- Создает Docker-образы при релизах
+GitHub Actions (`.github/workflows/ci-cd.yml`):
 
-## Разработка
+| Job | Триггер | Описание |
+|-----|---------|----------|
+| `build` | push/PR → main, develop | Компиляция, тесты для всех 6 модулей (matrix) |
+| `docker` | push → main | Docker Buildx → Docker Hub (`vetapp/<service>:latest` + `:git-sha`) |
 
-### Добавление нового сервиса
+## Маршруты Gateway
 
-1. Скопируйте структуру одного из существующих сервисов в `apps/`
-2. Добавьте модуль в корневой `pom.xml`
-3. Настройте маршрут в `gateway/src/main/resources/application.yml`
-
-### Генерация DTO из OpenAPI
-
-```bash
-# В пакете contracts
-openapi-generator-cli generate \
-  -i src/main/resources/openapi/clinic-api.yaml \
-  -g java \
-  -o src/main/java \
-  --additional-properties=library=jakarta-ee
-```
+| Route ID | Predicate | Target | StripPrefix |
+|----------|-----------|--------|-------------|
+| clinic-svc | `/api/clinic/**` | `localhost:8081` | 2 |
+| medication-svc | `/api/medication/**` | `localhost:8082` | 2 |
+| sync-svc | `/api/sync/**` | `localhost:8083` | 2 |
+| audit-svc | `/api/audit/**` | `localhost:8084` | 2 |

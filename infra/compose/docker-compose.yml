@@ -1,0 +1,13 @@
+services:
+  clinic-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: clinic
+      POSTGRES_USER: clinic
+      POSTGRES_PASSWORD: clinic
+    ports:
+      -"5432:5432"
+    volumes:
+      -clinic-db-data:/var/lib/postgresql/data
+  volumes:
+  clinic-db-data:
