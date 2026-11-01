@@ -6,7 +6,7 @@ spring:
     name: clinic-svc
 
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:clinic_db}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:clinic}
     username: ${DB_USER:postgres}
     password: ${DB_PASSWORD:postgres}
     hikari:
